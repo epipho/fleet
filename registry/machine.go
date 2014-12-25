@@ -43,17 +43,28 @@ func (r *EtcdRegistry) Machines() (machines []machine.MachineState, err error) {
 	}
 
 	for _, node := range resp.Node.Nodes {
+		var mach machine.MachineState
+
+		mach.ID = path.Base(node.Key)
+
 		for _, obj := range node.Nodes {
-			if !strings.HasSuffix(obj.Key, "/object") {
-				continue
+			// Load machine object
+			if strings.HasSuffix(obj.Key, "/object") {
+				err = unmarshal(obj.Value, &mach)
+				if err != nil {
+					return
+				}
+			} else if strings.HasSuffix(obj.Key, "/metadata") {
+				// Load metadata
+				mach.Metadata = make(map[string]string, len(obj.Nodes))
+				for _, mdnode := range obj.Nodes {
+					mach.Metadata[path.Base(mdnode.Key)] = mdnode.Value
+				}
 			}
+		}
 
-			var mach machine.MachineState
-			err = unmarshal(obj.Value, &mach)
-			if err != nil {
-				return
-			}
-
+		// only use the machine if there was an object key
+		if len(mach.Version) > 0 {
 			machines = append(machines, mach)
 		}
 	}
@@ -91,7 +102,59 @@ func (r *EtcdRegistry) SetMachineState(ms machine.MachineState, ttl time.Duratio
 		return uint64(0), err
 	}
 
+	// Set the initial metadata on creation
+	if err = r.setMachineMetadata(ms.ID, ms.Metadata); err != nil {
+		return uint64(0), err
+	}
+
 	return resp.Node.ModifiedIndex, nil
+}
+
+func (r *EtcdRegistry) SetMachineMetadata(machID string, key string, value string) error {
+	//Attempt to update key
+	update := etcd.Set{
+		Key:   path.Join(r.keyPrefix, machinePrefix, machID, "metadata", key),
+		Value: value,
+	}
+
+	_, err := r.etcd.Do(&update)
+	return err
+}
+
+func (r *EtcdRegistry) DeleteMachineMetadata(machID string, key string) error {
+	del := etcd.Delete{
+		Key: path.Join(r.keyPrefix, machinePrefix, machID, "metadata", key),
+	}
+
+	_, err := r.etcd.Do(&del)
+	if etcd.IsKeyNotFound(err) {
+		err = nil
+	}
+	return err
+}
+
+// Remove and reset all metadata
+func (r *EtcdRegistry) setMachineMetadata(machID string, metadata map[string]string) error {
+	del := etcd.Delete{
+		Key:       path.Join(r.keyPrefix, machinePrefix, machID, "metadata"),
+		Recursive: true,
+	}
+
+	_, err := r.etcd.Do(&del)
+	if etcd.IsKeyNotFound(err) {
+		err = nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	for key, val := range metadata {
+		if err = r.SetMachineMetadata(machID, key, val); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *EtcdRegistry) RemoveMachineState(machID string) error {
@@ -102,5 +165,16 @@ func (r *EtcdRegistry) RemoveMachineState(machID string) error {
 	if etcd.IsKeyNotFound(err) {
 		err = nil
 	}
+
+	// Delete metadata
+	req = etcd.Delete{
+		Key:       path.Join(r.keyPrefix, machinePrefix, machID, "metadata"),
+		Recursive: true,
+	}
+	_, err = r.etcd.Do(&req)
+	if etcd.IsKeyNotFound(err) {
+		err = nil
+	}
+
 	return err
 }

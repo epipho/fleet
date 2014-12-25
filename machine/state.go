@@ -23,7 +23,7 @@ const (
 type MachineState struct {
 	ID       string
 	PublicIP string
-	Metadata map[string]string
+	Metadata map[string]string `json:"-"`
 	Version  string
 }
 
