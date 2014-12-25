@@ -34,6 +34,7 @@ func NewServeMux(reg registry.Registry) http.Handler {
 		wireUpMachinesResource(sm, prefix, cAPI)
 		wireUpStateResource(sm, prefix, cAPI)
 		wireUpUnitsResource(sm, prefix, cAPI)
+		wireUpSchedulersResource(sm, prefix, cAPI)
 		sm.HandleFunc(prefix, methodNotAllowedHandler)
 	}
 
